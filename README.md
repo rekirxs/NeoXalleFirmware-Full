@@ -3,6 +3,11 @@
 
 Firmware for the NeoXalle reaction-training sport system.
 
+[![Watch the video](https://img.youtube.com/vi/leAVq9ZJ1fE/maxresdefault.jpg)](https://youtu.be/leAVq9ZJ1fE)
+
+### [Watch this video on YouTube](https://youtu.be/leAVq9ZJ1fE)
+
+
 
 ## Hardware Requirements
 
