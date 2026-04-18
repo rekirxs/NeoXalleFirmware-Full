@@ -27,11 +27,11 @@ Firmware for the NeoXalle reaction-training sport system.
 ## How It Works
 
 ### Master Device
-2. Waits for mobile app connection
-3. Scans for slaves with name pattern `NeoXalle_Slave_*`
-4. Connects to discovered slaves (max 2)
-5. Routes commands from app to slaves
-6. Forwards slave events back to app
+1. Waits for mobile app connection
+2. Scans for slaves with name pattern `NeoXalle_Slave_*`
+3. Connects to discovered slaves (max 2)
+4. Routes commands from app to slaves
+5. Forwards slave events back to app
 
 ### Slave Device
 1. Waits for master connection
