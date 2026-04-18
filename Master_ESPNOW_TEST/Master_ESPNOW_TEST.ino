@@ -2,26 +2,32 @@
 #include <esp_now.h>
 
 typedef struct {
-  float temp;
-  int value;
+  bool hit;
+  float gs;
 } DataPacket;
 
-DataPacket receivedData;
+DataPacket received;
 
-void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  memcpy(&receivedData, data, sizeof(receivedData));
-  Serial.print("Temp : ");
-  Serial.println(receivedData.temp);
-  Serial.print("Value: ");
-  Serial.println(receivedData.value);
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+  memcpy(&received, incomingData, sizeof(received));
+
+  if(received.hit) {
+    Serial.print("HIT Force is: ");
+    Serial.print(received.gs,1);
+    Serial.println("G");
+    
 }
+  }
+  
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   WiFi.mode(WIFI_STA);
 
   esp_now_init();
   esp_now_register_recv_cb(onReceive);
+  Serial.println("Master Ready");
 }
 
 void loop() {
