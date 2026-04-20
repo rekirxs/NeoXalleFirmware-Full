@@ -1,16 +1,25 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <Wire.h>
+#include <Adafruit_NeoPixel.h>
 
 #define ADXL375_ADDR 0x53
 #define REG_POWER_CTL 0x2D
 #define REG_DATA_FORMAT 0x31
 #define REG_DATAX0 0x32
 
-#define SDA_PIN 7
-#define SCL_PIN 6
+#define SDA_PIN 6 
+#define SCL_PIN 7  //blue pod
 
-#define HIT_THRESHOLD 150
+/* #define SDA_PIN 7
+#define SCL_PIN 6 */ //blackpod
+
+#define LED_PIN 2
+#define LED_COUNT 24
+
+#define HIT_THRESHOLD 30
+#define DEBOUNCE_MS 500
+#define LED_TIMEOUT 2000
 
 
 
@@ -35,11 +44,17 @@ uint8_t masterAddress [] = { 0xe0, 0x72, 0xa1, 0xd6, 0x44, 0xd8};
 typedef struct {
   bool hit;
   float gs;
+  int reactionMs;
 
 } DataPacket;
 
 DataPacket data;
 
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+unsigned long lastHit = 0;
+unsigned long ledOnTime = 0;
+bool ledActive = false;
 
 
 void writeReg(uint8_t reg, uint8_t val) {
@@ -49,16 +64,38 @@ void writeReg(uint8_t reg, uint8_t val) {
   Wire.endTransmission();
 }
 
+void ledOn() {
+  for (int i = 0; i < LED_COUNT; i++) {
+      strip.setPixelColor(i, strip.Color(0, 150, 255)); 
+  }
 
+  strip.show();
+  ledOnTime = millis();
+  ledActive = true;
+  Serial.println("Led on waiting for the hit");
+}
+
+void ledOff() {
+  for (int i = 0; i < LED_COUNT; i++) {
+      strip.setPixelColor(i, strip.Color(0, 0, 0)); 
+  }
+  strip.show();
+  ledActive = false;
+}
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
   Wire.begin(SDA_PIN, SCL_PIN);
   delay(100);
 
   writeReg(REG_POWER_CTL, 0x00);
   writeReg(REG_DATA_FORMAT, 0x0F);
   writeReg(REG_POWER_CTL, 0x08);
+
+  strip.begin();
+  strip.setBrightness(100);
+  strip.show();
 
   WiFi.mode(WIFI_STA);
   esp_now_init(); 
@@ -69,10 +106,24 @@ void setup() {
   peer.encrypt = false;
   esp_now_add_peer(&peer);
 
+  randomSeed(analogRead(0));
+
   Serial.println("Ready");
 }
 
 void loop() {
+
+  static unsigned long nextLedTime = 0;
+  if (!ledActive && millis() > nextLedTime) {
+    ledOn();
+    nextLedTime = millis() + random(3000,8000);
+  }
+
+  if (ledActive && millis() - ledOnTime > LED_TIMEOUT){
+    Serial.println("Missed! LED off");
+    ledOff();
+  }
+
   Wire.beginTransmission(ADXL375_ADDR);
   Wire.write(REG_DATAX0);
   Wire.endTransmission(false);
@@ -82,41 +133,39 @@ void loop() {
   int16_t ry = (Wire.read() | (Wire.read() << 8));
   int16_t rz = (Wire.read() | (Wire.read() << 8));
 
-  int16_t peak = max({abs(rx), abs(ry), abs(rz)});
+  static int16_t prevX = 0, prevY = 0, prevZ = 0;
 
-  int16_t restZ = 64;
-  int16_t impact = abs(rz) - restZ;
+  int16_t dX = abs(rx - prevX);
+  int16_t dY = abs(ry - prevY);
+  int16_t dZ = abs(rz - prevZ); 
 
+  int16_t delta = max({dX, dY, dZ});
 
+  prevX = rx; prevY = ry; prevZ = rz;
 
-  if (impact > HIT_THRESHOLD) {
-    float gs = impact * 0.049f;
+  if (delta > HIT_THRESHOLD && millis() - lastHit > DEBOUNCE_MS) {
+    lastHit = millis();
 
-    Serial.print("HIT! force: ");
-    Serial.print(gs, 1);
-    Serial.println("G");
+    if (ledActive) {
+      int reactionMs = millis() - ledOnTime;
+      float gs = delta * 0.049f;
 
-    data.hit = true;
-    data.gs = gs;
-    esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+      Serial.print("HIT! Reaction time was: ");
+      Serial.print(reactionMs);
+      Serial.println("ms force: ");
+      Serial.print(gs,1);
+      Serial.println("G");
 
-    delay(300);
+      data.hit = true;
+      data.gs = gs;
+      data.reactionMs = reactionMs;
+      esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+
+      ledOff();
+    } else {
+      Serial.println("Hit detected but led was anyways off, ignoredddd");
+    }
+   
   }
-
-
-
-
- delay(10);
- 
- static int16_t lastZ = 0;
- if (abs(rz - lastZ) > 5) {
-    Serial.print("RAW X: "); Serial.print(rx);
-    Serial.print("  Y: "); Serial.print(ry);
-    Serial.print("  Z: "); Serial.println(rz);
-    lastZ = rz;
- }
-
-
- 
- delay(10);
+ delay(5);
 }
