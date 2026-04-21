@@ -27,6 +27,9 @@ MAC:                e0:72:a1:d6:44:d8
 
 
 uint8_t masterAddress [] = { 0xe0, 0x72, 0xa1, 0xd6, 0x44, 0xd8};
+typedef struct {
+  bool turnOn;
+} CommandPacket;
 
 typedef struct {
   bool hit;
@@ -73,6 +76,15 @@ void readAccel(int16_t &rx, int16_t &ry, int16_t &rz) {
   rz = (Wire.read() << 8)| (Wire.read());
 
 }
+
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len){
+  CommandPacket cmd;
+  memcpy(&cmd, incomingData, sizeof(cmd));
+  if(cmd.turnOn && !ledActive){
+    ledOn();
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -91,6 +103,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   esp_now_init(); 
+  esp_now_register_recb_cb(onReceive);
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, masterAddress, 6);
@@ -98,21 +111,16 @@ void setup() {
   peer.encrypt = false;
   esp_now_add_peer(&peer);
 
-  randomSeed(analogRead(0));
-
   Serial.println("Ready");
 }
 
 void loop() {
-
-  static unsigned long nextLedTime = 0;
-  if (!ledActive && millis() > nextLedTime) {
-    ledOn();
-    nextLedTime = millis() + random(3000,8000);
-  }
-
   if (ledActive && millis() - ledOnTime > LED_TIMEOUT){
     Serial.println("Missed! LED off");
+    data.hit = false;
+    data.gs = 0;
+    data.reactionMs = -1;
+    esp_now_send(masterAdress, (uint8_t *)&data, sizeof(data));
     ledOff();
   }
   int16_t rx, ry, rz;
