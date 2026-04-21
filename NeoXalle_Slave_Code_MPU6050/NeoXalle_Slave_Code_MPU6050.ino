@@ -3,32 +3,19 @@
 #include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
-#define ADXL375_ADDR 0x53
-#define REG_POWER_CTL 0x2D
-#define REG_DATA_FORMAT 0x31
-#define REG_DATAX0 0x32
+#define MPU6050_ADDR 0x68
+#define REG_PWR_MGMT_1 0x6B
+#define REG_ACCEL_XOUT 0x3B
 
-#define SDA_PIN 6 
-#define SCL_PIN 7  //blue pod
-
-/* #define SDA_PIN 7
-#define SCL_PIN 6 */ //blackpod
-
+#define SDA_PIN 6
+#define SCL_PIN 7
 #define LED_PIN 2
 #define LED_COUNT 24
 
-#define HIT_THRESHOLD 30
-#define DEBOUNCE_MS 500
+#define HIT_THRESHOLD 1000
+#define DEBOUNCE_MS 800
 #define LED_TIMEOUT 2000
 
-
-
-/* SLAVE
- Chip type:          ESP32-C3 (QFN32) (revision v0.4)
-Features:           Wi-Fi, BT 5 (LE), Single Core, 160MHz, Embedded Flash 4MB (XMC)
-Crystal frequency:  40MHz
-USB mode:           USB-Serial/JTAG
-MAC:                20:6e:f1:6b:ad:ac*/ 
 
 /* MASTER
 Connected to ESP32-S3 on COM15:
@@ -56,14 +43,6 @@ unsigned long lastHit = 0;
 unsigned long ledOnTime = 0;
 bool ledActive = false;
 
-
-void writeReg(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(ADXL375_ADDR);
-  Wire.write(reg);
-  Wire.write(val);
-  Wire.endTransmission();
-}
-
 void ledOn() {
   for (int i = 0; i < LED_COUNT; i++) {
       strip.setPixelColor(i, strip.Color(0, 150, 255)); 
@@ -82,6 +61,18 @@ void ledOff() {
   strip.show();
   ledActive = false;
 }
+
+void readAccel(int16_t &rx, int16_t &ry, int16_t &rz) {
+   Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(REG_ACCEL_XOUT);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU6050_ADDR,6);
+
+  rx = (Wire.read() << 8)| (Wire.read());
+  ry = (Wire.read() << 8)| (Wire.read());
+  rz = (Wire.read() << 8)| (Wire.read());
+
+}
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -89,9 +80,10 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN);
   delay(100);
 
-  writeReg(REG_POWER_CTL, 0x00);
-  writeReg(REG_DATA_FORMAT, 0x0F);
-  writeReg(REG_POWER_CTL, 0x08);
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(REG_PWR_MGMT_1);
+  Wire.write(0x00);
+  Wire.endTransmission();
 
   strip.begin();
   strip.setBrightness(100);
@@ -123,16 +115,9 @@ void loop() {
     Serial.println("Missed! LED off");
     ledOff();
   }
-
-  Wire.beginTransmission(ADXL375_ADDR);
-  Wire.write(REG_DATAX0);
-  Wire.endTransmission(false);
-  Wire.requestFrom(ADXL375_ADDR,6);
-
-  int16_t rx = (Wire.read() | (Wire.read() << 8));
-  int16_t ry = (Wire.read() | (Wire.read() << 8));
-  int16_t rz = (Wire.read() | (Wire.read() << 8));
-
+  int16_t rx, ry, rz;
+  readAccel(rx, ry, rz);
+ 
   static int16_t prevX = 0, prevY = 0, prevZ = 0;
 
   int16_t dX = abs(rx - prevX);
@@ -148,7 +133,7 @@ void loop() {
 
     if (ledActive) {
       int reactionMs = millis() - ledOnTime;
-      float gs = delta * 0.049f;
+      float gs = delta / 16384.0f;
 
       Serial.print("HIT! Reaction time was: ");
       Serial.print(reactionMs);
