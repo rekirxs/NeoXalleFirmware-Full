@@ -1,5 +1,9 @@
 #include <WiFi.h>
 #include <esp_now.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 uint8_t pod1[] = {0x20, 0x6E, 0xF1, 0x6B, 0xAD, 0xAC};
 uint8_t pod2[] = {0xA8, 0x46, 0x74, 0x47, 0xE2, 0xB0};
@@ -8,8 +12,17 @@ uint8_t pod4[] = {0x50, 0x78, 0x7d, 0x62, 0x49, 0xe8};
 
 uint8_t* pods[] = {pod1, pod2, pod3, pod4};
 
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CMD_CHAR_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define NOTIFY_CHAR_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+
+BLEServer* bleServer = nullptr;
+BLECharacteristic* notifyChar = nullptr;
+bool deviceConnected = false;
+
 typedef struct {
   bool turnOn; 
+  bool turnOff;
 } CommandPacket;
  
 typedef struct {
@@ -21,32 +34,66 @@ typedef struct {
 DataPacket received;
 CommandPacket cmd;
 
-void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* s) {
+    deviceConnected = true;
+    Serial.println("App connected");
+  }
+  void onDisconnect(BLEServer* s){
+    deviceConnected = false;
+    Serial.println("App disconnected");
+    bleServer->startAdvertising();
+  }
+}
+class CmdCallbacks : public BLECharacteristicsCallbacks {
+  void onWrite(BLECharacteristic* c){
+    String val = c->getValue().c_str();
+    Serial.print("BLE cmd: "); Serial.println(val);
+
+    if (val == "OFF:ALL"){
+      cmd.turnOn = false;
+      cmd.turnOff = true;
+      for (int i = 0; i < 4; i++)
+        esp_now_send(pods[i], (uint8_t *)&cmd, sizeof(cmd));
+    } else if (val.startsWith("ON")){
+      int podIndex = val.substring(3).toInt() - 1;
+      if (podIndex >= 0 && podIndex < 4) {
+        cmd.turnOn = true;
+        cmd.turnOff = false;
+        esp_now_send(pods[podIndex], (uint8_t *)&cmd, sizeof(cmd));
+        Serial.print("Triggered pod" ); Serial.println(podIndex + 1);
+      }
+    }
+  }
+};
+void onEspReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
   memcpy(&received, incomingData, sizeof(received));
 
-  Serial.print("pod [");
-  for (int i = 0; i < 6; i++) {
-    Serial.print(info->src_addr[i], HEX);
-    if (i < 5) Serial.print(":");
+  int podNum = -1;
+  for (int i = 0; i < 4; i++) {
+    if (memcmp(info->src_addr, pods[i], 6) == 0){
+      podNum = i + 1;
+      break;
+    }
   }
-  Serial.print("] ");
-
-  if(received.reactionMs == -1) {
-    Serial.println("Missed");
-    
+  
+  char result[64];
+  if (received.reactionMs == -1) {
+    snprintf(result,sizeof(result), "MISS:%d", podNum);
   } else {
-    Serial.print("Hit, reaction: ");
-    Serial.print(received.reactionMs);
-    Serial.print("ms force: ");
-    Serial.print(received.gs,1);
-    Serial.println("G");
+    snprintf(result,sizeof(result), "MISS:%d", podNum, received.reactionMs, received.gs);
   }
+
+  Serial.println(result);
+
+  if (deviceConnected) {
+    notifyChar->setValue(result);
+    notifyChar->notify();
+  }
+
 }
 
-void sendTurnOn(uint8_t *adress){
-  cmd.turnOn= true;
-  esp_now_send(adress, (uint8_t *)&cmd, sizeof(cmd));
-}
+
 
 void setup() {
   Serial.begin(115200);
@@ -54,38 +101,38 @@ void setup() {
  
   WiFi.mode(WIFI_STA);
   esp_now_init();
-  esp_now_register_recv_cb(onReceive);
+  esp_now_register_recv_cb(onEspReceive);
   
   esp_now_peer_info_t peer = {};
   peer.channel = 0;
   peer.encrypt = false;
+  for (int i = 0; i < 4; i++) {
+    memcpy(peer.peer_addr, pods[i], 6);
+    esp_now_add_peer(&peer);
+  }
 
-  memcpy(peer.peer_addr, pod1, 6);
-  esp_now_add_peer(&peer);  
+
+  BLEDevice::init("NeoXalle-Master");
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new ServerCallbacks());
+
+  BLEService* service = bleServer->createService(SERVICE_UUID);
+
+  BLECharacteristics* cmdChar = service->createCharacteristics(
+    CMD_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
+  cmdChar->setCallbacks(new CmdCallbacks());
+
+  notifyChar = service->createCharacteristic(
+    NOTIFY_CHAR_UUID-> BLECharacteristic::PROPERTY_NOTIFY);
+  notifyChar->addDescriptor(new BLE2902());
+
+  service->start();
+  bleServer->getAdvertising()->start();
+
+  Serial.println("Master ready - advertising as NeoXalle-Master");
   
-  memcpy(peer.peer_addr, pod2, 6);
-  esp_now_add_peer(&peer);  
-
-  memcpy(peer.peer_addr, pod3, 6);
-  esp_now_add_peer(&peer);    
-
-  memcpy(peer.peer_addr, pod4, 6);
-  esp_now_add_peer(&peer); 
-
-  randomSeed(analogRead(0));
-  Serial.println("Master Ready");
-}
 
 void loop() {
   
-  static unsigned long nextTrigger = 0;
-
-  if (millis() > nextTrigger) {
-    int podIndex = random(4);
-    Serial.print("Triggering pod ");
-    Serial.println(podIndex + 1);
-
-    sendTurnOn(pods[podIndex]);
-    nextTrigger = millis() + random(3000, 8000);
-  }
+  
 }
