@@ -103,7 +103,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   esp_now_init(); 
-  esp_now_register_recb_cb(onReceive);
+  esp_now_register_recv_cb(onReceive);
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, masterAddress, 6);
@@ -120,7 +120,7 @@ void loop() {
     data.hit = false;
     data.gs = 0;
     data.reactionMs = -1;
-    esp_now_send(masterAdress, (uint8_t *)&data, sizeof(data));
+    esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
     ledOff();
   }
   int16_t rx, ry, rz;

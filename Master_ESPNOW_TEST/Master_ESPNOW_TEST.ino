@@ -4,8 +4,9 @@
 uint8_t pod1[] = {0x20, 0x6E, 0xF1, 0x6B, 0xAD, 0xAC};
 uint8_t pod2[] = {0xA8, 0x46, 0x74, 0x47, 0xE2, 0xB0};
 uint8_t pod3[] = {0x20, 0x6E, 0xF1, 0x67, 0x2E, 0x84};
+uint8_t pod4[] = {0x50, 0x78, 0x7d, 0x62, 0x49, 0xe8};
 
-uint8_t* pods[] = {pod1, pod2, pod3};
+uint8_t* pods[] = {pod1, pod2, pod3, pod4};
 
 typedef struct {
   bool turnOn; 
@@ -67,7 +68,10 @@ void setup() {
 
   memcpy(peer.peer_addr, pod3, 6);
   esp_now_add_peer(&peer);    
-  
+
+  memcpy(peer.peer_addr, pod4, 6);
+  esp_now_add_peer(&peer); 
+
   randomSeed(analogRead(0));
   Serial.println("Master Ready");
 }
@@ -77,7 +81,7 @@ void loop() {
   static unsigned long nextTrigger = 0;
 
   if (millis() > nextTrigger) {
-    int podIndex = random(3);
+    int podIndex = random(4);
     Serial.print("Triggering pod ");
     Serial.println(podIndex + 1);
 
