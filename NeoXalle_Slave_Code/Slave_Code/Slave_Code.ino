@@ -9,15 +9,15 @@
 #define REG_DATAX0 0x32
 
 #define SDA_PIN 6 
-#define SCL_PIN 7  //blue pod
+#define SCL_PIN 7  //blue pod 
 
-/* #define SDA_PIN 7
-#define SCL_PIN 6 */ //blackpod
+//#define SDA_PIN 7
+// #define SCL_PIN 6  //blackpod
 
 #define LED_PIN 2
 #define LED_COUNT 24
 
-#define HIT_THRESHOLD 30
+#define HIT_THRESHOLD 150
 #define DEBOUNCE_MS 500
 #define LED_TIMEOUT 2000
 
@@ -42,6 +42,7 @@ MAC:                e0:72:a1:d6:44:d8
 uint8_t masterAddress [] = { 0xe0, 0x72, 0xa1, 0xd6, 0x44, 0xd8};
 typedef struct {
   bool turnOn;
+  bool turnOff;
 } CommandPacket;
 
 typedef struct {
@@ -91,9 +92,8 @@ void ledOff() {
 void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData,int len) {
   CommandPacket cmd;
   memcpy(&cmd, incomingData, sizeof(cmd));
-  if(cmd.turnOn && !ledActive) {
-    ledOn();
-  }
+  if(cmd.turnOn && !ledActive) ledOn();
+  if(cmd.turnOff) ledOff();  
 }
 
 void setup() {
@@ -145,6 +145,9 @@ void loop() {
   int16_t rz = (Wire.read() | (Wire.read() << 8));
 
   static int16_t prevX = 0, prevY = 0, prevZ = 0;
+  static int16_t peakDelta = 0;
+  static unsigned long peakTime = 0;
+  static bool peakPending = false;
 
   int16_t dX = abs(rx - prevX);
   int16_t dY = abs(ry - prevY);
@@ -154,29 +157,37 @@ void loop() {
 
   prevX = rx; prevY = ry; prevZ = rz;
 
-  if (delta > HIT_THRESHOLD && millis() - lastHit > DEBOUNCE_MS) {
-    lastHit = millis();
-
-    if (ledActive) {
-      int reactionMs = millis() - ledOnTime;
-      float gs = delta * 0.049f;
-
-      Serial.print("HIT! Reaction time was: ");
-      Serial.print(reactionMs);
-      Serial.println("ms force: ");
-      Serial.print(gs,1);
-      Serial.println("G");
-
-      data.hit = true;
-      data.gs = gs;
-      data.reactionMs = reactionMs;
-      esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
-
-      ledOff();
-    } else {
-      Serial.println("Hit detected but led was anyways off, ignoredddd");
+  if (delta > HIT_THRESHOLD) {
+    if (!peakPending) {
+      peakPending = true;
+      peakDelta   = delta;
+      peakTime    = millis();
+    } else if (delta > peakDelta) {
+      peakDelta = delta;
     }
-   
   }
- delay(5);
+
+ 
+  if (peakPending && millis() - peakTime > 150) {
+    if (millis() - lastHit > DEBOUNCE_MS) {
+      lastHit = millis();
+      float gs = peakDelta * 0.049f;
+
+      Serial.print("HIT! delta: "); Serial.print(peakDelta);
+      Serial.print(" force: "); Serial.print(gs, 1); Serial.println("G");
+
+      if (ledActive) {
+        int reactionMs = millis() - ledOnTime;
+        data.hit        = true;
+        data.gs         = gs;
+        data.reactionMs = reactionMs;
+        esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+        ledOff();
+      }
+    }
+    peakPending = false;
+    peakDelta   = 0;
+  }
+
+  delay(5);
 }

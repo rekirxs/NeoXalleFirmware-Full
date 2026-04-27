@@ -44,8 +44,8 @@ class ServerCallbacks : public BLEServerCallbacks {
     Serial.println("App disconnected");
     bleServer->startAdvertising();
   }
-}
-class CmdCallbacks : public BLECharacteristicsCallbacks {
+};
+class CmdCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* c){
     String val = c->getValue().c_str();
     Serial.print("BLE cmd: "); Serial.println(val);
@@ -69,19 +69,25 @@ class CmdCallbacks : public BLECharacteristicsCallbacks {
 void onEspReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
   memcpy(&received, incomingData, sizeof(received));
 
+  // find which pod sent it
   int podNum = -1;
   for (int i = 0; i < 4; i++) {
-    if (memcmp(info->src_addr, pods[i], 6) == 0){
+    if (memcmp(info->src_addr, pods[i], 6) == 0) {
       podNum = i + 1;
       break;
     }
   }
-  
+
+  // debug
+  Serial.print("hit: "); Serial.print(received.hit);
+  Serial.print(" gs: "); Serial.print(received.gs);
+  Serial.print(" reactionMs: "); Serial.println(received.reactionMs);
+
   char result[64];
   if (received.reactionMs == -1) {
-    snprintf(result,sizeof(result), "MISS:%d", podNum);
+    snprintf(result, sizeof(result), "MISS:%d", podNum);
   } else {
-    snprintf(result,sizeof(result), "MISS:%d", podNum, received.reactionMs, received.gs);
+    snprintf(result, sizeof(result), "HIT:%d:%d:%.1f", podNum, received.reactionMs, received.gs);
   }
 
   Serial.println(result);
@@ -90,7 +96,6 @@ void onEspReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, 
     notifyChar->setValue(result);
     notifyChar->notify();
   }
-
 }
 
 
@@ -118,12 +123,12 @@ void setup() {
 
   BLEService* service = bleServer->createService(SERVICE_UUID);
 
-  BLECharacteristics* cmdChar = service->createCharacteristics(
+  BLECharacteristic* cmdChar = service->createCharacteristic(
     CMD_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
   cmdChar->setCallbacks(new CmdCallbacks());
 
   notifyChar = service->createCharacteristic(
-    NOTIFY_CHAR_UUID-> BLECharacteristic::PROPERTY_NOTIFY);
+  NOTIFY_CHAR_UUID, BLECharacteristic::PROPERTY_NOTIFY);
   notifyChar->addDescriptor(new BLE2902());
 
   service->start();
@@ -131,7 +136,7 @@ void setup() {
 
   Serial.println("Master ready - advertising as NeoXalle-Master");
   
-
+}
 void loop() {
   
   
