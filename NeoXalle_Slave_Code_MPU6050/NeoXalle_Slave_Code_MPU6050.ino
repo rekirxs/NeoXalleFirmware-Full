@@ -12,7 +12,7 @@
 #define LED_PIN 2
 #define LED_COUNT 24
 
-#define HIT_THRESHOLD 3000
+#define HIT_THRESHOLD 5000
 #define DEBOUNCE_MS 500
 #define LED_TIMEOUT 2000
 

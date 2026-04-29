@@ -104,7 +104,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
  
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   esp_now_init();
   esp_now_register_recv_cb(onEspReceive);
   
@@ -132,7 +132,14 @@ void setup() {
   notifyChar->addDescriptor(new BLE2902());
 
   service->start();
-  bleServer->getAdvertising()->start();
+
+  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
 
   Serial.println("Master ready - advertising as NeoXalle-Master");
   
