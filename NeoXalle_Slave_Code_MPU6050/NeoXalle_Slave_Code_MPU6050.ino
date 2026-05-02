@@ -7,8 +7,13 @@
 #define REG_PWR_MGMT_1 0x6B
 #define REG_ACCEL_XOUT 0x3B
 
-#define SDA_PIN 6
+/*#define SDA_PIN 6
 #define SCL_PIN 7
+*/ // blue pod
+
+#define SDA_PIN 7
+#define SCL_PIN 6
+
 #define LED_PIN 2
 #define LED_COUNT 24
 
