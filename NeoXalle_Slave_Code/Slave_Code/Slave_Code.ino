@@ -1,7 +1,11 @@
-#include <WiFi.h>
-#include <esp_now.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include <Wire.h>
 #include <Adafruit_NeoPixel.h>
+
+#define POD_ID 1
 
 #define ADXL375_ADDR 0x53
 #define REG_POWER_CTL 0x2D
@@ -9,7 +13,7 @@
 #define REG_DATAX0 0x32
 
 #define SDA_PIN 6 
-#define SCL_PIN 7  //blue pod 
+#define SCL_PIN 7
 
 //#define SDA_PIN 7
 // #define SCL_PIN 6  //blackpod
@@ -21,39 +25,13 @@
 #define DEBOUNCE_MS 500
 #define LED_TIMEOUT 2000
 
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CMD_CHAR_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define NOTIFY_CHAR_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
-
-/* SLAVE
- Chip type:          ESP32-C3 (QFN32) (revision v0.4)
-Features:           Wi-Fi, BT 5 (LE), Single Core, 160MHz, Embedded Flash 4MB (XMC)
-Crystal frequency:  40MHz
-USB mode:           USB-Serial/JTAG
-MAC:                20:6e:f1:6b:ad:ac*/ 
-
-/* MASTER
-Connected to ESP32-S3 on COM15:
-Chip type:          ESP32-S3 (QFN56) (revision v0.2)
-Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded PSRAM 8MB (AP_3v3)
-Crystal frequency:  40MHz
-MAC:                e0:72:a1:d6:44:d8
-*/
-
-
-uint8_t masterAddress [] = { 0xe0, 0x72, 0xa1, 0xd6, 0x44, 0xd8};
-typedef struct {
-  bool turnOn;
-  bool turnOff;
-} CommandPacket;
-
-typedef struct {
-  bool hit;
-  float gs;
-  int reactionMs;
-
-} DataPacket;
-
-
-DataPacket data;
+BLEServer* bleServer = nullptr;
+BLECharacteristic* notifyChar = nullptr;
+volatile bool deviceConnected = false;
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -89,12 +67,39 @@ void ledOff() {
   
 }
 
-void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData,int len) {
-  CommandPacket cmd;
-  memcpy(&cmd, incomingData, sizeof(cmd));
-  if(cmd.turnOn && !ledActive) ledOn();
-  if(cmd.turnOff) ledOff();  
+void sendResult(const char* msg) {
+  if (deviceConnected && notifyChar) {
+    notifyChar->setValue(msg);
+    notifyChar->notify();
+  }
 }
+
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* s) override {
+    deviceConnected = true;
+    Serial.println("App connected to this pod");
+  }
+  void onDisconnect(BLEServer* s) override {
+    deviceConnected = false; 
+    Serial.println("App disconnected, re-advertising .)");
+    delay(200);
+    bleServer->startAdvertising();
+  }
+};
+
+class CmdCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* c) override {
+    String val = String(c->getValue().c_str());
+    val.trim();
+    Serial.print("BLE cmd: "); Serial.print(val);
+
+    if (val == "ON" && !ledActive) {
+      ledOn();
+    } else if(val == "OFF") {
+      ledOff();
+    }
+  }
+};
 
 void setup() {
   Serial.begin(115200);
@@ -111,15 +116,34 @@ void setup() {
   strip.setBrightness(100);
   strip.show();
 
-  WiFi.mode(WIFI_STA);
-  esp_now_init(); 
-  esp_now_register_recv_cb(onReceive);
+  String deviceName = "Neoxalle-Pod-" + String(POD_ID);
+  BLEDevice::init(deviceName.c_str());
 
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, masterAddress, 6);
-  peer.channel = 0;
-  peer.encrypt = false;
-  esp_now_add_peer(&peer);
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new ServerCallbacks());
+
+  BLEService* service = bleServer->createService(SERVICE_UUID);
+
+  BLECharacteristic* cmdChar = service->createCharacteristic(
+    CMD_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
+  cmdChar->setCallbacks(new CmdCallbacks());
+
+  notifyChar = service->createCharacteristic(
+    NOTIFY_CHAR_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  notifyChar->addDescriptor(new BLE2902());
+
+  service->start();
+
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(SERVICE_UUID);
+  advertising->setScanResponse(true);
+  advertising->setMinPreferred(0x06);
+  advertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  Serial.print("Ready, advertising as ");
+  Serial.println(deviceName);
+
 
 
   Serial.println("Ready");
@@ -128,10 +152,7 @@ void setup() {
 void loop() {
   if (ledActive && millis() - ledOnTime > LED_TIMEOUT){
     Serial.println("Missed! LED off");
-    data.hit = false;
-    data.gs = 0;
-    data.reactionMs = -1;
-    esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+    sendResult("MISS");
     ledOff();
   }
 
@@ -178,10 +199,8 @@ void loop() {
 
       if (ledActive) {
         int reactionMs = millis() - ledOnTime;
-        data.hit        = true;
-        data.gs         = gs;
-        data.reactionMs = reactionMs;
-        esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+        char result[32];
+        snprintf(result, sizeof(result), "HIT:%d:#.1f", reactionMs, gs);
         ledOff();
       }
     }
